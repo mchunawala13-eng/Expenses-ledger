@@ -164,6 +164,71 @@
   }
   .receipt-sub span b { font-variant-numeric: tabular-nums; color: var(--paper); opacity: 1; }
 
+  .report-btn {
+    width: 100%;
+    margin-top: 14px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: var(--paper);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 0;
+    border-radius: 10px;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+    position: relative;
+    z-index: 1;
+  }
+  .report-btn:active { background: rgba(255,255,255,0.2); }
+
+  /* Month picker modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(28,26,23,0.5);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal-sheet {
+    background: var(--paper);
+    width: 100%;
+    max-width: 480px;
+    border-radius: 20px 20px 0 0;
+    padding: 22px 20px 30px;
+  }
+  .modal-sheet h3 {
+    margin: 0 0 4px;
+    font-family: 'DM Serif Display', serif;
+    font-size: 22px;
+  }
+  .modal-sheet p { margin: 0 0 16px; font-size: 13px; color: var(--muted); }
+  .month-input {
+    width: 100%;
+    font-size: 16px;
+    padding: 12px;
+    border: 1.5px solid var(--line);
+    border-radius: 12px;
+    background: white;
+    font-family: 'Inter', sans-serif;
+    margin-bottom: 14px;
+  }
+  .modal-actions { display: flex; gap: 10px; }
+  .modal-btn {
+    flex: 1;
+    padding: 13px 0;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+  }
+  .modal-btn.cancel { background: var(--paper-soft); color: var(--ink); }
+  .modal-btn.go { background: var(--ink); color: var(--paper); }
+
   /* ---------- QUICK ADD BAR ---------- */
   .quickadd {
     margin: 16px 18px 0;
@@ -454,6 +519,7 @@ if ('serviceWorker' in navigator) {
       <span>This week <b id="weekTotal">₹0</b></span>
       <span>This month <b id="monthTotal">₹0</b></span>
     </div>
+    <button class="report-btn" onclick="openReport()">📄 Monthly PDF report</button>
   </div>
 
   <div class="weekstrip" id="weekStrip"></div>
@@ -476,6 +542,18 @@ if ('serviceWorker' in navigator) {
   </div>
 
   <div class="entries" id="entriesList"></div>
+
+  <div class="modal-overlay" id="reportModal">
+    <div class="modal-sheet">
+      <h3>Monthly PDF Report</h3>
+      <p>Pick a month — the report includes both Factory and Personal sections with category summaries and full entry lists.</p>
+      <input type="month" class="month-input" id="reportMonth" />
+      <div class="modal-actions">
+        <button class="modal-btn cancel" onclick="closeReport()">Cancel</button>
+        <button class="modal-btn go" onclick="generateReport()">Generate PDF</button>
+      </div>
+    </div>
+  </div>
 
   <div class="toast" id="toast"></div>
 </div>
@@ -696,6 +774,149 @@ if ('serviceWorker' in navigator) {
   document.getElementById('amountInput').addEventListener('input', checkAddEnabled);
   document.getElementById('noteInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addEntry(); });
   document.getElementById('amountInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addEntry(); });
+
+  // ---------- MONTHLY PDF REPORT ----------
+  function openReport() {
+    const d = viewDate;
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    document.getElementById('reportMonth').value = d.getFullYear() + '-' + mm;
+    document.getElementById('reportModal').classList.add('show');
+  }
+  function closeReport() {
+    document.getElementById('reportModal').classList.remove('show');
+  }
+
+  function monthEntries(book, year, month) {
+    const start = new Date(year, month, 1).getTime();
+    const end = new Date(year, month + 1, 1).getTime();
+    return state[book].filter(e => e.day >= start && e.day < end).sort((a, b) => a.ts - b.ts);
+  }
+
+  function categoryTotals(list) {
+    const totals = {};
+    list.forEach(e => { totals[e.category] = (totals[e.category] || 0) + e.amount; });
+    return Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  }
+
+  function buildBookSection(title, accent, list) {
+    const total = list.reduce((s, e) => s + e.amount, 0);
+    if (list.length === 0) {
+      return `<div class="bk">
+        <div class="bk-head" style="border-color:${accent}">
+          <span class="bk-title" style="color:${accent}">${title}</span>
+          <span class="bk-total">₹0</span>
+        </div>
+        <div class="bk-empty">No expenses recorded this month.</div>
+      </div>`;
+    }
+    const cats = categoryTotals(list);
+    const catRows = cats.map(([c, amt]) =>
+      `<tr><td>${c}</td><td class="amt">₹${fmtMoney(amt)}</td><td class="pct">${Math.round(amt/total*100)}%</td></tr>`
+    ).join('');
+
+    const entryRows = list.map(e => {
+      const d = new Date(e.day);
+      const dateStr = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+      return `<tr>
+        <td class="dt">${dateStr}</td>
+        <td>${escapeHtml(e.note)}</td>
+        <td class="cat">${e.category}</td>
+        <td class="amt">₹${fmtMoney(e.amount)}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="bk">
+      <div class="bk-head" style="border-color:${accent}">
+        <span class="bk-title" style="color:${accent}">${title}</span>
+        <span class="bk-total">₹${fmtMoney(total)}</span>
+      </div>
+      <div class="sec-label">Category Summary</div>
+      <table class="rep-table summary">
+        <thead><tr><th>Category</th><th class="amt">Amount</th><th class="pct">Share</th></tr></thead>
+        <tbody>${catRows}</tbody>
+        <tfoot><tr><td>Total</td><td class="amt">₹${fmtMoney(total)}</td><td class="pct">100%</td></tr></tfoot>
+      </table>
+      <div class="sec-label">All Entries (${list.length})</div>
+      <table class="rep-table detail">
+        <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="amt">Amount</th></tr></thead>
+        <tbody>${entryRows}</tbody>
+      </table>
+    </div>`;
+  }
+
+  function generateReport() {
+    const val = document.getElementById('reportMonth').value;
+    if (!val) { showToast('Please pick a month'); return; }
+    const [year, month] = val.split('-').map(Number);
+    const mIdx = month - 1;
+
+    const monthName = new Date(year, mIdx, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+    const factoryList = monthEntries('factory', year, mIdx);
+    const personalList = monthEntries('personal', year, mIdx);
+    const factoryTotal = factoryList.reduce((s, e) => s + e.amount, 0);
+    const personalTotal = personalList.reduce((s, e) => s + e.amount, 0);
+    const grand = factoryTotal + personalTotal;
+
+    const factorySection = buildBookSection('Factory', '#C0531F', factoryList);
+    const personalSection = buildBookSection('Personal', '#2C5F4F', personalList);
+
+    const today = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>Expense Report ${monthName}</title>
+    <style>
+      @page { size: A4; margin: 14mm; }
+      * { box-sizing: border-box; }
+      body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1C1A17; margin: 0; font-size: 12px; }
+      .head { text-align: center; border-bottom: 2px solid #1C1A17; padding-bottom: 12px; margin-bottom: 18px; }
+      .head h1 { margin: 0; font-size: 22px; letter-spacing: 0.5px; }
+      .head .sub { color: #8A8270; font-size: 13px; margin-top: 4px; }
+      .grand { display: flex; justify-content: space-around; background: #1C1A17; color: #FAF6EF; border-radius: 8px; padding: 12px; margin-bottom: 20px; }
+      .grand div { text-align: center; }
+      .grand .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; }
+      .grand .val { font-size: 18px; font-weight: 700; margin-top: 2px; }
+      .bk { margin-bottom: 26px; page-break-inside: avoid; }
+      .bk-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid; padding-bottom: 6px; margin-bottom: 10px; }
+      .bk-title { font-size: 17px; font-weight: 700; }
+      .bk-total { font-size: 16px; font-weight: 700; }
+      .bk-empty { color: #8A8270; font-style: italic; padding: 8px 0; }
+      .sec-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #8A8270; margin: 14px 0 6px; font-weight: 700; }
+      .rep-table { width: 100%; border-collapse: collapse; }
+      .rep-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #8A8270; border-bottom: 1px solid #DDD4C0; padding: 5px 6px; }
+      .rep-table td { padding: 5px 6px; border-bottom: 1px solid #F1EBDD; }
+      .rep-table .amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .rep-table .pct { text-align: right; color: #8A8270; width: 50px; }
+      .rep-table .dt { white-space: nowrap; color: #8A8270; width: 60px; }
+      .rep-table .cat { color: #8A8270; }
+      .rep-table.summary tfoot td { font-weight: 700; border-top: 2px solid #1C1A17; border-bottom: none; padding-top: 7px; }
+      .foot { text-align: center; color: #8A8270; font-size: 10px; margin-top: 24px; border-top: 1px solid #DDD4C0; padding-top: 8px; }
+    </style></head><body>
+      <div class="head">
+        <h1>Expense Report</h1>
+        <div class="sub">${monthName}</div>
+      </div>
+      <div class="grand">
+        <div><div class="lbl">Factory</div><div class="val">₹${fmtMoney(factoryTotal)}</div></div>
+        <div><div class="lbl">Personal</div><div class="val">₹${fmtMoney(personalTotal)}</div></div>
+        <div><div class="lbl">Grand Total</div><div class="val">₹${fmtMoney(grand)}</div></div>
+      </div>
+      ${factorySection}
+      ${personalSection}
+      <div class="foot">Generated ${today} · Daily Expense Ledger</div>
+    </body></html>`;
+
+    closeReport();
+
+    const w = window.open('', '_blank');
+    if (!w) {
+      showToast('Allow pop-ups to generate the report');
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { w.focus(); w.print(); }, 400);
+  }
 
   renderChips();
   render();

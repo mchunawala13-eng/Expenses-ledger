@@ -1,4 +1,4 @@
-const CACHE = 'expense-ledger-v1';
+const CACHE = 'expense-ledger-v2';
 const ASSETS = [
   './',
   './index.html',
